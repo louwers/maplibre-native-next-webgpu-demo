@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>maplibre-native-next on WebGPU: OpenFreeMap Liberty</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; background: #f2efe9; }
+    canvas:active { cursor: grabbing; }
+    #status { position: fixed; top: 12px; left: 12px; max-width: 32em; padding: 8px 12px;
+              background: rgba(255, 255, 255, 0.92); border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
+    #status:empty { display: none; }
+    #status.error { color: #b00020; }
+    #attribution { position: fixed; right: 0; bottom: 0; padding: 2px 6px; font-size: 12px;
+                   background: rgba(255, 255, 255, 0.8); }
+  </style>
+</head>
+<body>
+  <canvas id="map"></canvas>
+  <div id="status">Loading…</div>
+  <div id="attribution">
+    <a href="https://openfreemap.org">OpenFreeMap</a>
+    © <a href="https://www.openmaptiles.org/">OpenMapTiles</a>
+    Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>
+    · Rendered by <a href="https://github.com/louwers/maplibre-native-next">maplibre-native-next</a>
+    on WebGPU
+  </div>
+  <script>
+    const canvas = document.getElementById("map");
+    const statusElement = document.getElementById("status");
+    const context = canvas.getContext("2d");
+
+    function showStatus(text, isError) {
+      statusElement.textContent = text;
+      statusElement.className = isError ? "error" : "";
+    }
+
+    // Draws a frame the map rendered: premultiplied RGBA rows of `stride`
+    // bytes, at device pixels. The map is opaque, so premultiplied is plain.
+    function present(pixels, width, height, stride) {
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      context.putImageData(new ImageData(pixels, stride / 4, height), 0, 0, 0, 0, width, height);
+    }
+
+    function unsupported() {
+      if (!window.crossOriginIsolated) return "This page needs cross-origin isolation (the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers in web/_headers).";
+      if (!navigator.gpu) return "WebGPU isn't available in this browser.";
+      if (typeof WebAssembly.Suspending !== "function") return "This page needs WebAssembly JavaScript Promise Integration (JSPI), as in Chrome or Edge 137 and newer.";
+      return null;
+    }
+
+    let ready = false;
+    function start() {
+      window.Module = {
+        arguments: [String(canvas.clientWidth), String(canvas.clientHeight), String(window.devicePixelRatio || 1)],
+        showStatus,
+        present,
+        print: (text) => console.log(text),
+        printErr: (text) => console.warn(text),
+        onRuntimeInitialized: () => { ready = true; },
+        onAbort: (reason) => showStatus("The map stopped: " + reason, true),
+      };
+      const script = document.createElement("script");
+      script.src = "demo.js";
+      document.body.appendChild(script);
+
+      let last = null;
+      canvas.addEventListener("pointerdown", (event) => {
+        canvas.setPointerCapture(event.pointerId);
+        last = { x: event.clientX, y: event.clientY };
+      });
+      canvas.addEventListener("pointermove", (event) => {
+        if (!last || !ready) return;
+        Module._demo_pan(event.clientX - last.x, event.clientY - last.y);
+        last = { x: event.clientX, y: event.clientY };
+      });
+      const end = () => { last = null; };
+      canvas.addEventListener("pointerup", end);
+      canvas.addEventListener("pointercancel", end);
+      canvas.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        if (!ready) return;
+        const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 : 1;
+        Module._demo_zoom(-event.deltaY * lines / 400, event.offsetX, event.offsetY);
+      }, { passive: false });
+      canvas.addEventListener("dblclick", (event) => {
+        if (ready) Module._demo_zoom(1, event.offsetX, event.offsetY);
+      });
+      window.addEventListener("resize", () => {
+        if (ready) Module._demo_resize(canvas.clientWidth, canvas.clientHeight);
+      });
+    }
+
+    // navigator.gpu can exist without an adapter: Chromium on Linux renders
+    // WebGPU through Vulkan, which it leaves off unless chrome://flags/#enable-vulkan
+    // (or --enable-features=Vulkan) turns it on.
+    async function noAdapter() {
+      if (await navigator.gpu.requestAdapter()) return null;
+      const linux = /Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent);
+      return "WebGPU found no GPU adapter." + (linux
+        ? " On Linux, Chromium needs Vulkan: enable chrome://flags/#enable-vulkan and restart the browser."
+        : "");
+    }
+
+    const problem = unsupported();
+    if (problem) showStatus(problem, true);
+    else noAdapter().then((message) => message ? showStatus(message, true) : start());
+  </script>
+</body>
+</html>

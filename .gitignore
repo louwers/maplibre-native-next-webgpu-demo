@@ -1,0 +1,5 @@
+/build/
+/web/demo.js
+/web/demo.wasm
+/.wrangler/
+/node_modules/

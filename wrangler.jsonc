@@ -1,0 +1,11 @@
+// Serves web/ as Workers static assets; web/_headers sets the cross-origin
+// isolation headers the threads need. Deploy with `npx wrangler deploy` after
+// ./build.sh.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "maplibre-native-next-webgpu-demo",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./web"
+  }
+}

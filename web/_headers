@@ -1,0 +1,5 @@
+# Threads (SharedArrayBuffer) need cross-origin isolation. Credentialless COEP
+# still lets the map fetch OpenFreeMap's tiles, which it requests with CORS.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
