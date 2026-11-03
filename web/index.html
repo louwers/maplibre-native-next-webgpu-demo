@@ -6,8 +6,18 @@
   <title>maplibre-native-next on WebGPU: OpenFreeMap Liberty</title>
   <style>
     html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
-    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: grab; background: #f2efe9; }
-    canvas:active { cursor: grabbing; }
+    #view { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background: #f2efe9; }
+    #view:active { cursor: grabbing; }
+    /* One canvas pixel per device pixel, centered, at any window size: the
+       box is the view in device pixels, scaled back down, and object-fit:
+       none never scales the frame. The map renders in a worker, so a resize
+       changes the box a frame or two before the frame at the new size
+       arrives. Meanwhile the previous frame keeps its size and position
+       instead of stretching. */
+    canvas { position: absolute; left: 50%; top: 50%;
+             width: calc(100vw * var(--dpr, 1)); height: calc(100vh * var(--dpr, 1));
+             transform: translate(-50%, -50%) scale(calc(1 / var(--dpr, 1)));
+             object-fit: none; pointer-events: none; }
     #status { position: fixed; top: 12px; left: 12px; max-width: 32em; padding: 8px 12px;
               background: rgba(255, 255, 255, 0.92); border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
     #status:empty { display: none; }
@@ -17,7 +27,7 @@
   </style>
 </head>
 <body>
-  <canvas id="map"></canvas>
+  <div id="view"><canvas id="map"></canvas></div>
   <div id="status">Loading…</div>
   <div id="attribution">
     <a href="https://openfreemap.org">OpenFreeMap</a>
@@ -27,7 +37,7 @@
     on WebGPU
   </div>
   <script>
-    const canvas = document.getElementById("map");
+    const view = document.getElementById("view");
     const statusElement = document.getElementById("status");
 
     function showStatus(text, isError) {
@@ -44,8 +54,10 @@
 
     let ready = false;
     function start() {
+      const ratio = window.devicePixelRatio || 1;
+      document.documentElement.style.setProperty("--dpr", String(ratio));
       window.Module = {
-        arguments: [String(canvas.clientWidth), String(canvas.clientHeight), String(window.devicePixelRatio || 1)],
+        arguments: [String(view.clientWidth), String(view.clientHeight), String(ratio)],
         showStatus,
         print: (text) => console.log(text),
         printErr: (text) => console.warn(text),
@@ -57,29 +69,29 @@
       document.body.appendChild(script);
 
       let last = null;
-      canvas.addEventListener("pointerdown", (event) => {
-        canvas.setPointerCapture(event.pointerId);
+      view.addEventListener("pointerdown", (event) => {
+        view.setPointerCapture(event.pointerId);
         last = { x: event.clientX, y: event.clientY };
       });
-      canvas.addEventListener("pointermove", (event) => {
+      view.addEventListener("pointermove", (event) => {
         if (!last || !ready) return;
         Module._demo_pan(event.clientX - last.x, event.clientY - last.y);
         last = { x: event.clientX, y: event.clientY };
       });
       const end = () => { last = null; };
-      canvas.addEventListener("pointerup", end);
-      canvas.addEventListener("pointercancel", end);
-      canvas.addEventListener("wheel", (event) => {
+      view.addEventListener("pointerup", end);
+      view.addEventListener("pointercancel", end);
+      view.addEventListener("wheel", (event) => {
         event.preventDefault();
         if (!ready) return;
         const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 : 1;
         Module._demo_zoom(-event.deltaY * lines / 400, event.offsetX, event.offsetY);
       }, { passive: false });
-      canvas.addEventListener("dblclick", (event) => {
+      view.addEventListener("dblclick", (event) => {
         if (ready) Module._demo_zoom(1, event.offsetX, event.offsetY);
       });
       window.addEventListener("resize", () => {
-        if (ready) Module._demo_resize(canvas.clientWidth, canvas.clientHeight);
+        if (ready) Module._demo_resize(view.clientWidth, view.clientHeight);
       });
     }
 
