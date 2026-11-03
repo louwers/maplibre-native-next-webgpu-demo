@@ -22,19 +22,19 @@ default. Enable `chrome://flags/#enable-vulkan` (or start it with
 
 ## How it works
 
-- `src/main.c` uses the C API: a continuous map with an offscreen render
-  session. It runs on a pthread (`-sPROXY_TO_PTHREAD`), demands frames, reads
-  each rendered frame back and hands the pixels to the page, which draws them
-  into a 2D canvas. Pointer and wheel input become camera jumps.
+- `src/main.c` uses the C API. It runs on a pthread (`-sPROXY_TO_PTHREAD`)
+  that owns the page's canvas (`-sOFFSCREENCANVASES_TO_PTHREAD=#map`). It
+  creates the WebGPU device and a surface on the canvas, and attaches a
+  continuous map's render session to them with
+  `MLN_RENDER_DRIVER_CALLER_GRAPHICS_THREAD`. The map then renders on that
+  thread, straight into the canvas, whenever the loop services the session.
+  Pointer and wheel input become camera jumps.
 - maplibre-native-ffi's browser build is an Emscripten module. The Rust port
   reaches WebGPU through a wgpu backend over `webgpu.h` (crate
   `mln_wgpu_webgpu_h`), which Dawn's emdawnwebgpu port implements on the
   browser's WebGPU. Tiles, glyphs and sprites come through `emscripten_fetch`.
 - `web/_headers` sets `Cross-Origin-Opener-Policy` and
   `Cross-Origin-Embedder-Policy` on Cloudflare Workers.
-
-Reading every frame back costs time; rendering straight into the canvas is the
-next step.
 
 ## Build and deploy
 

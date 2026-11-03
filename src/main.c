@@ -2,17 +2,22 @@
 // of MapLibre Native, through maplibre-native-ffi's C API, on WebGPU in the
 // browser.
 //
-// main() runs on a pthread (-sPROXY_TO_PTHREAD), where blocking is allowed.
-// It drives a continuous map with an offscreen render session: it demands
-// frames, reads each rendered frame back and hands the pixels to the page's
-// thread, which draws them into the canvas. The page reports pointer and wheel
-// input through demo_pan() and demo_zoom(), which only record it; the loop
-// turns it into camera jumps.
+// main() runs on a pthread (-sPROXY_TO_PTHREAD), where blocking is allowed,
+// and owns the page's canvas (-sOFFSCREENCANVASES_TO_PTHREAD=#map). It creates
+// the WebGPU device and a surface on the canvas, and attaches a continuous
+// map's render session to them with MLN_RENDER_DRIVER_CALLER_GRAPHICS_THREAD:
+// the map renders on this thread, straight into the canvas, whenever the loop
+// services the session. The session also sizes the canvas: configuring the
+// surface sets it, in the same task as the frame drawn into it, so a resize
+// never shows a blank canvas. The page reports pointer and wheel input through
+// demo_pan() and demo_zoom(), which only record it; the loop turns it into
+// camera jumps.
 
 #include <maplibre_native_c.h>
 
 #include <emscripten.h>
 #include <emscripten/threading.h>
+#include <webgpu/webgpu.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -20,7 +25,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define STYLE_URL "https://tiles.openfreemap.org/styles/liberty"
 #define TILE_SIZE 512.0
@@ -56,9 +60,6 @@ typedef struct waiter {
   atomic_int released;
   mln_status status;
   char diagnostic[256];
-  bool readback;
-  uint8_t* pixels;
-  mln_texture_image_info info;
 } waiter;
 
 static void on_complete(void* user_data, const mln_completion_result* result) {
@@ -66,12 +67,6 @@ static void on_complete(void* user_data, const mln_completion_result* result) {
   w->status = result->status;
   snprintf(w->diagnostic, sizeof(w->diagnostic), "%.*s", (int)result->diagnostic.size,
            (const char*)result->diagnostic.data);
-  if (w->readback && result->status == MLN_STATUS_OK && result->value != NULL) {
-    const mln_texture_readback_result* readback = result->value;
-    w->info = readback->info;
-    w->pixels = malloc(readback->data.size);
-    memcpy(w->pixels, readback->data.data, readback->data.size);
-  }
   atomic_store(&w->done, 1);
 }
 
@@ -79,9 +74,8 @@ static void on_release(void* user_data) {
   atomic_store(&((waiter*)user_data)->released, 1);
 }
 
-static mln_completion completion_for(waiter* w, bool readback) {
+static mln_completion completion_for(waiter* w) {
   memset(w, 0, sizeof(*w));
-  w->readback = readback;
   return (mln_completion){
     .size = sizeof(mln_completion),
     .callback = on_complete,
@@ -90,8 +84,23 @@ static mln_completion completion_for(waiter* w, bool readback) {
   };
 }
 
+// The session, once attached: waits service it, since its graphics work runs
+// on this thread.
+static mln_render_session session = MLN_HANDLE_NULL;
+
+static void service(void) {
+  if (session != MLN_HANDLE_NULL) CALL(mln_render_session_service_driver_work, session);
+}
+
+// Sleeps by suspending (JSPI), which lets the browser present the canvas and
+// run this thread's events.
+static void yield(unsigned milliseconds) { emscripten_sleep(milliseconds); }
+
 static void wait_for(waiter* w, const char* what) {
-  while (!atomic_load(&w->done) || !atomic_load(&w->released)) usleep(1000);
+  while (!atomic_load(&w->done) || !atomic_load(&w->released)) {
+    service();
+    yield(1);
+  }
   if (w->status != MLN_STATUS_OK) {
     char message[512];
     snprintf(message, sizeof(message), "%s failed (%d): %s", what, (int)w->status, w->diagnostic);
@@ -189,18 +198,68 @@ static void jump(mln_map map, const view* v) {
   CALL(mln_map_update_camera, map, &update, NULL);
 }
 
-// MARK: - Frames
+// MARK: - WebGPU
 
-static void present(const uint8_t* pixels, const mln_texture_image_info* info) {
-  // Synchronous, and copied here: ImageData can't view shared memory, and
-  // Emscripten keeps this code's view of the heap current as the heap grows.
-  MAIN_THREAD_EM_ASM(
-    {
-      const copy = new Uint8ClampedArray($3 * $2);
-      copy.set(HEAPU8.subarray($0, $0 + $3 * $2));
-      Module.present(copy, $1, $2, $3);
-    },
-    pixels, info->width, info->height, info->stride);
+typedef struct gpu {
+  WGPUInstance instance;
+  WGPUAdapter adapter;
+  WGPUDevice device;
+  WGPUSurface surface;
+  WGPUTextureFormat format;
+} gpu;
+
+static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message,
+                       void* out, void* unused) {
+  (void)unused;
+  if (status != WGPURequestAdapterStatus_Success) fprintf(stderr, "requestAdapter: %.*s\n", (int)message.length, message.data);
+  *(WGPUAdapter*)out = adapter;
+}
+
+static void on_device(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* out,
+                      void* unused) {
+  (void)unused;
+  if (status != WGPURequestDeviceStatus_Success) fprintf(stderr, "requestDevice: %.*s\n", (int)message.length, message.data);
+  *(WGPUDevice*)out = device;
+}
+
+static void on_uncaptured_error(const WGPUDevice* device, WGPUErrorType type, WGPUStringView message, void* a,
+                                void* b) {
+  (void)device, (void)a, (void)b;
+  fprintf(stderr, "WebGPU error %d: %.*s\n", (int)type, (int)message.length, message.data);
+}
+
+static void wait_future(WGPUInstance instance, WGPUFuture future) {
+  WGPUFutureWaitInfo info = {.future = future};
+  wgpuInstanceWaitAny(instance, 1, &info, UINT64_MAX);
+}
+
+// The device, and a surface on the canvas this thread owns.
+static gpu create_gpu(void) {
+  gpu g = {0};
+  const WGPUInstanceFeatureName features[] = {WGPUInstanceFeatureName_TimedWaitAny};
+  const WGPUInstanceDescriptor instance_descriptor = {.requiredFeatureCount = 1, .requiredFeatures = features};
+  g.instance = wgpuCreateInstance(&instance_descriptor);
+  if (g.instance == NULL) report("WebGPU: no instance"), exit(1);
+  wait_future(g.instance, wgpuInstanceRequestAdapter(g.instance, &(WGPURequestAdapterOptions){.powerPreference = WGPUPowerPreference_HighPerformance},
+                                                     (WGPURequestAdapterCallbackInfo){.mode = WGPUCallbackMode_WaitAnyOnly, .callback = on_adapter, .userdata1 = &g.adapter}));
+  if (g.adapter == NULL) report("WebGPU found no GPU adapter."), exit(1);
+  const WGPUDeviceDescriptor device_descriptor = {
+    .uncapturedErrorCallbackInfo = {.callback = on_uncaptured_error},
+  };
+  wait_future(g.instance, wgpuAdapterRequestDevice(g.adapter, &device_descriptor,
+                                                   (WGPURequestDeviceCallbackInfo){.mode = WGPUCallbackMode_WaitAnyOnly, .callback = on_device, .userdata1 = &g.device}));
+  if (g.device == NULL) report("WebGPU: no device"), exit(1);
+  WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvas = {
+    .chain = {.sType = WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector},
+    .selector = {.data = "#map", .length = WGPU_STRLEN},
+  };
+  g.surface = wgpuInstanceCreateSurface(g.instance, &(WGPUSurfaceDescriptor){.nextInChain = &canvas.chain});
+  if (g.surface == NULL) report("WebGPU: no surface on the canvas"), exit(1);
+  WGPUSurfaceCapabilities capabilities = {0};
+  wgpuSurfaceGetCapabilities(g.surface, g.adapter, &capabilities);
+  g.format = capabilities.formatCount > 0 ? capabilities.formats[0] : WGPUTextureFormat_BGRA8Unorm;
+  wgpuSurfaceCapabilitiesFreeMembers(capabilities);
+  return g;
 }
 
 // Demands a frame and waits for its result.
@@ -223,7 +282,8 @@ static mln_render_result demand(mln_render_session session, uint64_t token) {
       }
       return result.disposition;
     }
-    usleep(1000);
+    service();
+    yield(0);
   }
 }
 
@@ -242,7 +302,7 @@ int main(int argc, char** argv) {
   CALL(mln_runtime_create, &runtime_options, &runtime);
 
   waiter w;
-  mln_completion done = completion_for(&w, false);
+  mln_completion done = completion_for(&w);
   const mln_map_options map_options = {
     .size = sizeof(map_options),
     .initial_extent = {.width = v.width, .height = v.height, .scale_factor = scale_factor},
@@ -252,21 +312,25 @@ int main(int argc, char** argv) {
   CALL(mln_runtime_create_map, runtime, &map_options, &map, &done);
   wait_for(&w, "mln_runtime_create_map");
 
-  done = completion_for(&w, false);
+  done = completion_for(&w);
   CALL(mln_map_set_style_url, map, mln_buffer_view_from_cstr(STYLE_URL), &done);
   wait_for(&w, "mln_map_set_style_url");
   jump(map, &v);
 
-  done = completion_for(&w, false);
-  const mln_offscreen_descriptor descriptor = {
-    .size = sizeof(descriptor), .logical_size = {.width = v.width, .height = v.height}
+  const gpu g = create_gpu();
+  done = completion_for(&w);
+  const mln_web_gpu_surface_descriptor descriptor = {
+    .size = sizeof(descriptor),
+    .logical_size = {.width = v.width, .height = v.height},
+    .context = {.instance = g.instance, .device = g.device},
+    .surface = g.surface,
+    .format = (uint32_t)g.format,
   };
   const mln_render_session_attach_options attach_options = {
-    .size = sizeof(attach_options), .driver = MLN_RENDER_DRIVER_CORE_WORKER
+    .size = sizeof(attach_options), .driver = MLN_RENDER_DRIVER_CALLER_GRAPHICS_THREAD
   };
-  mln_render_session session = MLN_HANDLE_NULL;
-  CALL(mln_map_attach_offscreen, map, &descriptor, &attach_options, MLN_HANDLE_NULL, &session, &done);
-  wait_for(&w, "mln_map_attach_offscreen");
+  CALL(mln_map_attach_web_gpu_surface, map, &descriptor, &attach_options, &session, &done);
+  wait_for(&w, "mln_map_attach_web_gpu_surface");
   MAIN_THREAD_EM_ASM({ Module.showStatus("", false); });
 
   for (uint64_t token = 1;; token++) {
@@ -275,20 +339,14 @@ int main(int argc, char** argv) {
     if (width != 0 && height != 0 && (width != v.width || height != v.height)) {
       v.width = width;
       v.height = height;
-      done = completion_for(&w, false);
+      done = completion_for(&w);
       CALL(mln_render_session_resize, session, (mln_logical_size){width, height}, &done);
       wait_for(&w, "mln_render_session_resize");
     }
     if (take_input(&v)) jump(map, &v);
 
-    if (demand(session, token) != MLN_RENDER_RESULT_RENDERED) {
-      usleep(16000);
-      continue;
-    }
-    done = completion_for(&w, true);
-    CALL(mln_render_session_read_texture, session, &done);
-    wait_for(&w, "mln_render_session_read_texture");
-    present(w.pixels, &w.info);
-    free(w.pixels);
+    // A rendered frame is presented when this thread yields; with nothing
+    // new to draw, wait for the next display frame.
+    yield(demand(session, token) == MLN_RENDER_RESULT_RENDERED ? 0 : 16);
   }
 }

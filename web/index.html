@@ -29,21 +29,10 @@
   <script>
     const canvas = document.getElementById("map");
     const statusElement = document.getElementById("status");
-    const context = canvas.getContext("2d");
 
     function showStatus(text, isError) {
       statusElement.textContent = text;
       statusElement.className = isError ? "error" : "";
-    }
-
-    // Draws a frame the map rendered: premultiplied RGBA rows of `stride`
-    // bytes, at device pixels. The map is opaque, so premultiplied is plain.
-    function present(pixels, width, height, stride) {
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      context.putImageData(new ImageData(pixels, stride / 4, height), 0, 0, 0, 0, width, height);
     }
 
     function unsupported() {
@@ -58,7 +47,6 @@
       window.Module = {
         arguments: [String(canvas.clientWidth), String(canvas.clientHeight), String(window.devicePixelRatio || 1)],
         showStatus,
-        present,
         print: (text) => console.log(text),
         printErr: (text) => console.warn(text),
         onRuntimeInitialized: () => { ready = true; },
