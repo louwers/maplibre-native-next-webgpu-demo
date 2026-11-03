@@ -13,7 +13,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-release="${FFI_RELEASE:-maplibre-native-next-v0.0.2}"
+release="${FFI_RELEASE:-maplibre-native-next-v0.0.3}"
 name=maplibre-native-c-emscripten-wasm32-webgpu
 ffi="${1:-}"
 if [[ -z "$ffi" ]]; then
