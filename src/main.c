@@ -262,6 +262,9 @@ static gpu create_gpu(void) {
   return g;
 }
 
+// Suspends (JSPI) until the browser's next animation frame on this worker.
+EM_ASYNC_JS(void, wait_animation_frame, (), { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+
 // Demands a frame and waits for its result.
 static mln_render_result demand(mln_render_session session, uint64_t token) {
   const mln_frame_demand frame_demand = {.size = sizeof(frame_demand), .token = token};
@@ -345,8 +348,9 @@ int main(int argc, char** argv) {
     }
     if (take_input(&v)) jump(map, &v);
 
-    // A rendered frame is presented when this thread yields; with nothing
-    // new to draw, wait for the next display frame.
-    yield(demand(session, token) == MLN_RENDER_RESULT_RENDERED ? 0 : 16);
+    // The frame shows when this thread yields. Waiting for the next
+    // animation frame paces rendering to the display.
+    demand(session, token);
+    wait_animation_frame();
   }
 }

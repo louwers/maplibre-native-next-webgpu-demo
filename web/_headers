@@ -1,5 +1,7 @@
-# Threads (SharedArrayBuffer) need cross-origin isolation. Credentialless COEP
-# still lets the map fetch OpenFreeMap's tiles, which it requests with CORS.
+# Threads (SharedArrayBuffer) need cross-origin isolation. require-corp is the
+# embedder policy every browser supports (Safari has no credentialless); the
+# map requests OpenFreeMap's tiles, glyphs and sprites with CORS, which it
+# allows.
 /*
   Cross-Origin-Opener-Policy: same-origin
-  Cross-Origin-Embedder-Policy: credentialless
+  Cross-Origin-Embedder-Policy: require-corp

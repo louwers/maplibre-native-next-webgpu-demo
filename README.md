@@ -28,13 +28,15 @@ default. Enable `chrome://flags/#enable-vulkan` (or start it with
   continuous map's render session to them with
   `MLN_RENDER_DRIVER_CALLER_GRAPHICS_THREAD`. The map then renders on that
   thread, straight into the canvas, whenever the loop services the session.
-  Pointer and wheel input become camera jumps.
+  The loop waits for the worker's `requestAnimationFrame` between frames, which
+  paces rendering to the display. Pointer and wheel input become camera jumps.
 - maplibre-native-ffi's browser build is an Emscripten module. The Rust port
   reaches WebGPU through a wgpu backend over `webgpu.h` (crate
   `mln_wgpu_webgpu_h`), which Dawn's emdawnwebgpu port implements on the
   browser's WebGPU. Tiles, glyphs and sprites come through `emscripten_fetch`.
-- `web/_headers` sets `Cross-Origin-Opener-Policy` and
-  `Cross-Origin-Embedder-Policy` on Cloudflare Workers.
+- `web/_headers` sets `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: require-corp` on Cloudflare Workers. The map
+  fetches its tiles with CORS, which `require-corp` allows.
 
 ## Build and deploy
 
