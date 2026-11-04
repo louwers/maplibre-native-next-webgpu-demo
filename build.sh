@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
-# Puts @bartlwrs/mln-next-web, the map package this page uses, into
-# web/vendor/mln-next-web: from npm ($MLN_NEXT_WEB_VERSION, latest by
-# default), or from a local build of it:
+# Builds web/demo.js and web/demo.wasm: src/main.c linked against a browser
+# build of maplibre-native-ffi on maplibre-native-next.
 #
-#   ./build.sh [path/to/maplibre-native-next/platform/web/dist]
+# Usage: ./build.sh [extracted maplibre-native-c-emscripten-wasm32-webgpu directory]
 #
-# The package starts its workers and loads its WebAssembly from its own
-# directory, so it has to be served from this page's origin rather than from a
-# CDN.
+# Without an argument it downloads the archive from the $FFI_RELEASE release of
+# louwers/maplibre-native-ffi. emcc must be the Emscripten that built the
+# archive, because the Rust code in it calls the emdawnwebgpu port that
+# Emscripten version pins: Emscripten 6.0.9 from nixpkgs ea9e3ef, which
+# `nix shell github:NixOS/nixpkgs/ea9e3ef341e11c193537f674f821a99f9f436729#emscripten`
+# provides.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-vendor=web/vendor/mln-next-web
-rm -rf "$vendor"
-mkdir -p "$vendor"
-if [[ $# -gt 0 ]]; then
-  cp -R "$1"/. "$vendor"/
-else
-  mkdir -p build
-  tarball=$(cd build && npm pack --silent "@bartlwrs/mln-next-web@${MLN_NEXT_WEB_VERSION:-latest}")
-  tar -xzf "build/$tarball" -C "$vendor" --strip-components=1
+release="${FFI_RELEASE:-maplibre-native-next-v0.0.3}"
+name=maplibre-native-c-emscripten-wasm32-webgpu
+ffi="${1:-}"
+if [[ -z "$ffi" ]]; then
+  ffi="build/$name"
+  if [[ ! -d "$ffi" ]]; then
+    mkdir -p build
+    curl -sSfL -o "build/$name.tar.gz" \
+      "https://github.com/louwers/maplibre-native-ffi/releases/download/$release/$name.tar.gz"
+    tar -xzf "build/$name.tar.gz" -C build
+  fi
 fi
-echo "web/vendor/mln-next-web: $(node -p "require('./$vendor/package.json').version")"
+
+# A writable cache for Emscripten's system libraries and ports; the Nix
+# package's own is read-only.
+export EM_CACHE="${EM_CACHE:-$PWD/build/em-cache}"
+
+mapfile -t link_flags < "$ffi/share/maplibre-native-c/emscripten-link-flags.txt"
+emcc src/main.c -O2 -DMLN_STATIC -I"$ffi/include" \
+  "$ffi/lib/libmaplibre-native-c.a" "${link_flags[@]}" \
+  -sPROXY_TO_PTHREAD -sENVIRONMENT=web,worker \
+  -sOFFSCREENCANVAS_SUPPORT=1 "-sOFFSCREENCANVASES_TO_PTHREAD=#map" \
+  -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4GB \
+  -sEXPORTED_FUNCTIONS=_main,_demo_pan,_demo_zoom,_demo_resize \
+  -o web/demo.js

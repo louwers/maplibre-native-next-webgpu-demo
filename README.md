@@ -2,45 +2,55 @@
 
 OpenFreeMap's [Liberty](https://openfreemap.org/) style, rendered in the browser
 by [maplibre-native-next](https://github.com/louwers/maplibre-native-next), a
-Rust port of the MapLibre Native core, on WebGPU. The page uses
-[`@bartlwrs/mln-next-web`](https://github.com/louwers/maplibre-native-next/tree/main/platform/web),
-which puts the port behind a trimmed-down MapLibre GL JS API.
+Rust port of the MapLibre Native core, through the C API of
+[maplibre-native-ffi](https://github.com/louwers/maplibre-native-ffi)
+(branch `implementation-switch`), with WebGPU.
 
 Live: https://maplibre-native-next-webgpu-demo.bart-louwers.workers.dev
 
-Drag to pan, scroll or double-click to zoom, right-drag to rotate and pitch.
+Drag to pan; scroll or double-click to zoom.
 
 ## Browser support
 
-The page needs WebGPU. It has been tested in Chromium (Chrome and Edge 113
-and newer). On Linux, Chromium renders WebGPU through Vulkan, which it leaves
-off by default: enable `chrome://flags/#enable-vulkan` (or start it with
+The page needs WebGPU with a GPU adapter, cross-origin isolation (for threads)
+and WebAssembly JavaScript Promise Integration (JSPI): Chrome or Edge 137 or
+newer. Safari has no JSPI yet.
+
+On Linux, Chromium renders WebGPU through Vulkan, which it leaves off by
+default. Enable `chrome://flags/#enable-vulkan` (or start it with
 `--enable-features=Vulkan`) and restart the browser.
 
 ## How it works
 
-- `web/index.html` creates the map, as with GL JS:
-  `new Map({container, style, center, zoom})`.
-- `web/_headers` makes the page cross-origin isolated
-  (`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` on
-  Cloudflare Workers). The package then runs the map in a worker that owns the
-  canvas, with tile parsing and layout on more workers. Without the headers,
-  it would run everything on the page's thread.
-- The package is the port compiled to WebAssembly with wasm-bindgen, drawing
-  straight into the canvas with wgpu's WebGPU backend. No Emscripten.
+- `src/main.c` uses the C API. It runs on a pthread (`-sPROXY_TO_PTHREAD`)
+  that owns the page's canvas (`-sOFFSCREENCANVASES_TO_PTHREAD=#map`). It
+  creates the WebGPU device and a surface on the canvas, and attaches a
+  continuous map's render session to them with
+  `MLN_RENDER_DRIVER_CALLER_GRAPHICS_THREAD`. The map then renders on that
+  thread, straight into the canvas, whenever the loop services the session.
+  The loop waits for the worker's `requestAnimationFrame` between frames, which
+  paces rendering to the display. Pointer and wheel input become camera jumps.
+- maplibre-native-ffi's browser build is an Emscripten module. The Rust port
+  reaches WebGPU through a wgpu backend over `webgpu.h` (crate
+  `mln_wgpu_webgpu_h`), which Dawn's emdawnwebgpu port implements on the
+  browser's WebGPU. Tiles, glyphs and sprites come through `emscripten_fetch`.
+- `web/_headers` sets `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Embedder-Policy: require-corp` on Cloudflare Workers. The map
+  fetches its tiles with CORS, which `require-corp` allows.
 
 ## Build and deploy
 
 ```sh
-./build.sh            # puts the package from npm into web/vendor/
+nix shell github:NixOS/nixpkgs/ea9e3ef341e11c193537f674f821a99f9f436729#emscripten --command ./build.sh [maplibre-native-ffi browser build]
 npx wrangler dev      # http://127.0.0.1:8787
 npx wrangler deploy
 ```
 
-`./build.sh path/to/maplibre-native-next/platform/web/dist` uses a local
-build of the package instead (`platform/web/build.sh` in maplibre-native-next
-makes one). The package starts its workers and loads its WebAssembly from its
-own directory, so it is served from the page's origin, not from a CDN.
+`build.sh` links against an installed `maplibre-native-c-emscripten-wasm32-webgpu`
+build of maplibre-native-ffi, or downloads the archive from a release of
+louwers/maplibre-native-ffi. Use the Emscripten that built that archive
+(6.0.9, from the pinned nixpkgs above): the Rust code in it calls the
+emdawnwebgpu port that Emscripten version pins.
 
 `tools/screenshot.mjs` opens the page (a local `web/` directory or a URL) in
 headless Chromium and screenshots it.
