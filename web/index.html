@@ -2,10 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>maplibre-native-next on WebGPU: OpenFreeMap Liberty</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+    /* The map fills the screen, notch areas included (viewport-fit=cover),
+       and the page itself never zooms, scrolls or bounces: pinches and drags
+       anywhere go to the map. */
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif;
+                 touch-action: none; overscroll-behavior: none; -webkit-user-select: none; user-select: none; }
     #view { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background: #f2efe9; }
     #view:active { cursor: grabbing; }
     /* One canvas pixel per device pixel, centered, at any window size: the
@@ -18,11 +22,12 @@
              width: calc(100vw * var(--dpr, 1)); height: calc(100vh * var(--dpr, 1));
              transform: translate(-50%, -50%) scale(calc(1 / var(--dpr, 1)));
              object-fit: none; pointer-events: none; }
-    #status { position: fixed; top: 12px; left: 12px; max-width: 32em; padding: 8px 12px;
+    #status { position: fixed; top: calc(12px + env(safe-area-inset-top)); left: calc(12px + env(safe-area-inset-left)); max-width: 32em; padding: 8px 12px;
               background: rgba(255, 255, 255, 0.92); border-radius: 6px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); }
     #status:empty { display: none; }
     #status.error { color: #b00020; }
-    #attribution { position: fixed; right: 0; bottom: 0; padding: 2px 6px; font-size: 12px;
+    #attribution { position: fixed; right: env(safe-area-inset-right); bottom: env(safe-area-inset-bottom);
+                   padding: 2px 6px; font-size: 12px;
                    background: rgba(255, 255, 255, 0.8); }
   </style>
 </head>
@@ -75,27 +80,85 @@
       script.src = "demo.js";
       document.body.appendChild(script);
 
-      let last = null;
+      // Pointers on the map by id, in CSS pixels of the view: one drags the
+      // map, two pinch it. The gesture follows their center and, with two,
+      // their distance.
+      const pointers = new Map();
+      let gesture = null;
+      const local = (event) => {
+        const rect = view.getBoundingClientRect();
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      };
+      const center = (points) => ({
+        x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+        y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
+      });
+      const distance = ([a, b]) => Math.hypot(a.x - b.x, a.y - b.y);
+      // Starts over from the pointers down now, when one is added or lifted.
+      function restartGesture() {
+        const points = [...pointers.values()];
+        gesture = points.length === 0 ? null
+          : { ...center(points), distance: points.length >= 2 ? distance(points) : 0 };
+      }
       view.addEventListener("pointerdown", (event) => {
         view.setPointerCapture(event.pointerId);
-        last = { x: event.clientX, y: event.clientY };
+        pointers.set(event.pointerId, local(event));
+        restartGesture();
       });
       view.addEventListener("pointermove", (event) => {
-        if (!last || !ready) return;
-        Module._demo_pan(event.clientX - last.x, event.clientY - last.y);
-        last = { x: event.clientX, y: event.clientY };
+        if (!pointers.has(event.pointerId)) return;
+        pointers.set(event.pointerId, local(event));
+        if (!ready || !gesture) return;
+        const points = [...pointers.values()];
+        const now = center(points);
+        Module._demo_pan(now.x - gesture.x, now.y - gesture.y);
+        if (points.length >= 2) {
+          const spread = distance(points);
+          if (gesture.distance > 0 && spread > 0) Module._demo_zoom(Math.log2(spread / gesture.distance), now.x, now.y);
+          gesture.distance = spread;
+        }
+        gesture.x = now.x;
+        gesture.y = now.y;
       });
-      const end = () => { last = null; };
-      view.addEventListener("pointerup", end);
-      view.addEventListener("pointercancel", end);
+      const lift = (event) => {
+        pointers.delete(event.pointerId);
+        restartGesture();
+      };
+      view.addEventListener("pointerup", lift);
+      view.addEventListener("pointercancel", lift);
       view.addEventListener("wheel", (event) => {
         event.preventDefault();
         if (!ready) return;
-        const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 : 1;
-        Module._demo_zoom(-event.deltaY * lines / 400, event.offsetX, event.offsetY);
+        const { x, y } = local(event);
+        if (event.ctrlKey) {
+          // A trackpad pinch in Chrome, Edge and Firefox: the page would zoom
+          // by a factor of exp(-deltaY / 100).
+          Module._demo_zoom(-event.deltaY / 100 * Math.LOG2E, x, y);
+        } else {
+          const lines = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 40 : 1;
+          Module._demo_zoom(-event.deltaY * lines / 400, x, y);
+        }
       }, { passive: false });
+      // A trackpad pinch in Safari on macOS: gesture events with the scale
+      // since the pinch began. On iOS a pinch sends them too, beside the
+      // pointer events that already zoom.
+      let gestureScale = 1;
+      document.addEventListener("gesturestart", (event) => {
+        event.preventDefault();
+        gestureScale = 1;
+      });
+      document.addEventListener("gesturechange", (event) => {
+        event.preventDefault();
+        if (!ready || pointers.size > 0 || !(event.scale > 0)) return;
+        const { x, y } = local(event);
+        Module._demo_zoom(Math.log2(event.scale / gestureScale), x, y);
+        gestureScale = event.scale;
+      });
+      document.addEventListener("gestureend", (event) => event.preventDefault());
       view.addEventListener("dblclick", (event) => {
-        if (ready) Module._demo_zoom(1, event.offsetX, event.offsetY);
+        if (!ready) return;
+        const { x, y } = local(event);
+        Module._demo_zoom(1, x, y);
       });
       window.addEventListener("resize", () => {
         if (ready) Module._demo_resize(view.clientWidth, view.clientHeight);
