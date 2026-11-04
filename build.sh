@@ -2,19 +2,19 @@
 # Builds web/demo.js and web/demo.wasm: src/main.c linked against a browser
 # build of maplibre-native-ffi on maplibre-native-next.
 #
-# Usage: ./build.sh [extracted maplibre-native-c-emscripten-wasm32-webgpu directory]
+# Usage: ./build.sh [extracted maplibre-native-c-emscripten-wasm32-webgpu-next directory]
 #
 # Without an argument it downloads the archive from the $FFI_RELEASE release of
-# louwers/maplibre-native-ffi. emcc must be the Emscripten that built the
-# archive, because the Rust code in it calls the emdawnwebgpu port that
-# Emscripten version pins: Emscripten 6.0.9 from nixpkgs ea9e3ef, which
-# `nix shell github:NixOS/nixpkgs/ea9e3ef341e11c193537f674f821a99f9f436729#emscripten`
-# provides.
+# louwers/maplibre-native-ffi, which maplibre-native-ffi's CI built. emcc must
+# be the Emscripten that built the archive, because the Rust code in it calls
+# the emdawnwebgpu port that Emscripten version pins: 6.0.13, the version that
+# maplibre-native-ffi's .config/mise.emscripten.toml pins, which
+# `emsdk install 6.0.13` provides.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-release="${FFI_RELEASE:-maplibre-native-next-v0.0.3-3aea2f7}"
-name=maplibre-native-c-emscripten-wasm32-webgpu
+release="${FFI_RELEASE:-maplibre-native-next-v0.0.3-de59db8}"
+name=maplibre-native-c-emscripten-wasm32-webgpu-next
 ffi="${1:-}"
 if [[ -z "$ffi" ]]; then
   # One directory per release, so a new release isn't shadowed by an old one.
@@ -27,8 +27,8 @@ if [[ -z "$ffi" ]]; then
   fi
 fi
 
-# A writable cache for Emscripten's system libraries and ports; the Nix
-# package's own is read-only.
+# A cache for Emscripten's system libraries and ports of the demo's own, which
+# a read-only Emscripten install also needs.
 export EM_CACHE="${EM_CACHE:-$PWD/build/em-cache}"
 
 mapfile -t link_flags < "$ffi/share/maplibre-native-c/emscripten-link-flags.txt"

@@ -46,16 +46,18 @@ default. Enable `chrome://flags/#enable-vulkan` (or start it with
 ## Build and deploy
 
 ```sh
-nix shell github:NixOS/nixpkgs/ea9e3ef341e11c193537f674f821a99f9f436729#emscripten --command ./build.sh [maplibre-native-ffi browser build]
+emsdk install 6.0.13 && emsdk activate 6.0.13 && source "$EMSDK/emsdk_env.sh"
+./build.sh [maplibre-native-ffi browser build]
 npx wrangler dev      # http://127.0.0.1:8787
 npx wrangler deploy
 ```
 
-`build.sh` links against an installed `maplibre-native-c-emscripten-wasm32-webgpu`
-build of maplibre-native-ffi, or downloads the archive from a release of
-louwers/maplibre-native-ffi. Use the Emscripten that built that archive
-(6.0.9, from the pinned nixpkgs above): the Rust code in it calls the
-emdawnwebgpu port that Emscripten version pins.
+`build.sh` links against an installed
+`maplibre-native-c-emscripten-wasm32-webgpu-next` build of maplibre-native-ffi,
+or downloads the archive that maplibre-native-ffi's CI built from a release of
+louwers/maplibre-native-ffi. Use the Emscripten that built that archive (6.0.13,
+the version that maplibre-native-ffi's `.config/mise.emscripten.toml` pins): the
+Rust code in it calls the emdawnwebgpu port that Emscripten version pins.
 
 `tools/screenshot.mjs` opens the page (a local `web/` directory or a URL) in
 headless Chromium and screenshots it.
