@@ -13,16 +13,17 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-release="${FFI_RELEASE:-maplibre-native-next-v0.0.3}"
+release="${FFI_RELEASE:-maplibre-native-next-v0.0.3-3aea2f7}"
 name=maplibre-native-c-emscripten-wasm32-webgpu
 ffi="${1:-}"
 if [[ -z "$ffi" ]]; then
-  ffi="build/$name"
+  # One directory per release, so a new release isn't shadowed by an old one.
+  ffi="build/$release/$name"
   if [[ ! -d "$ffi" ]]; then
-    mkdir -p build
-    curl -sSfL -o "build/$name.tar.gz" \
+    mkdir -p "build/$release"
+    curl -sSfL -o "build/$release/$name.tar.gz" \
       "https://github.com/louwers/maplibre-native-ffi/releases/download/$release/$name.tar.gz"
-    tar -xzf "build/$name.tar.gz" -C build
+    tar -xzf "build/$release/$name.tar.gz" -C "build/$release"
   fi
 fi
 
