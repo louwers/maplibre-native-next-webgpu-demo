@@ -14,7 +14,7 @@ Drag to pan; scroll or double-click to zoom.
 
 The page needs WebGPU with a GPU adapter, cross-origin isolation (for threads)
 and WebAssembly JavaScript Promise Integration (JSPI): Chrome or Edge 137 or
-newer. Safari has no JSPI yet.
+newer, or Safari 27 or newer.
 
 On Linux, Chromium renders WebGPU through Vulkan, which it leaves off by
 default. Enable `chrome://flags/#enable-vulkan` (or start it with

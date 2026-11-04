@@ -48,7 +48,7 @@
     function unsupported() {
       if (!window.crossOriginIsolated) return "This page needs cross-origin isolation (the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers in web/_headers).";
       if (!navigator.gpu) return "WebGPU isn't available in this browser.";
-      if (typeof WebAssembly.Suspending !== "function") return "This page needs WebAssembly JavaScript Promise Integration (JSPI), as in Chrome or Edge 137 and newer.";
+      if (typeof WebAssembly.Suspending !== "function") return "This page needs WebAssembly JavaScript Promise Integration (JSPI), as in Chrome or Edge 137 and newer, or Safari 27 and newer.";
       return null;
     }
 
