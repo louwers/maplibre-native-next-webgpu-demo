@@ -10,6 +10,11 @@ Live: https://maplibre-native-next-webgpu-demo.bart-louwers.workers.dev
 
 Drag to pan; scroll or double-click to zoom.
 
+Add `?style=<URL>` to load another style, such as
+[`?style=https://demotiles.maplibre.org/style.json`](https://maplibre-native-next-webgpu-demo.bart-louwers.workers.dev/?style=https://demotiles.maplibre.org/style.json).
+The style's server, and those of its sources, must allow CORS. The page then
+leaves out OpenFreeMap's attribution.
+
 ## Browser support
 
 The page needs WebGPU with a GPU adapter, cross-origin isolation (for threads)

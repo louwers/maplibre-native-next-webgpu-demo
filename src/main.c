@@ -26,7 +26,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define STYLE_URL "https://tiles.openfreemap.org/styles/liberty"
+// The style the page loads without ?style=.
+#define DEFAULT_STYLE_URL "https://tiles.openfreemap.org/styles/liberty"
 #define TILE_SIZE 512.0
 #define MAX_ZOOM 19.0
 
@@ -298,6 +299,8 @@ int main(int argc, char** argv) {
     v.height = (uint32_t)atoi(argv[2]);
     scale_factor = atof(argv[3]);
   }
+  // The page passes the URL of its ?style= query parameter, if any.
+  const char* style_url = argc >= 5 ? argv[4] : DEFAULT_STYLE_URL;
 
   MAIN_THREAD_EM_ASM({ Module.showStatus("Starting the map…", false); });
   mln_runtime runtime = MLN_HANDLE_NULL;
@@ -316,7 +319,7 @@ int main(int argc, char** argv) {
   wait_for(&w, "mln_runtime_create_map");
 
   done = completion_for(&w);
-  CALL(mln_map_set_style_url, map, mln_buffer_view_from_cstr(STYLE_URL), &done);
+  CALL(mln_map_set_style_url, map, mln_buffer_view_from_cstr(style_url), &done);
   wait_for(&w, "mln_map_set_style_url");
   jump(map, &v);
 

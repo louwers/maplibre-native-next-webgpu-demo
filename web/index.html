@@ -30,10 +30,10 @@
   <div id="view"><canvas id="map"></canvas></div>
   <div id="status">Loading…</div>
   <div id="attribution">
-    <a href="https://openfreemap.org">OpenFreeMap</a>
+    <span id="style-credit"><a href="https://openfreemap.org">OpenFreeMap</a>
     © <a href="https://www.openmaptiles.org/">OpenMapTiles</a>
     Data from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>
-    · Rendered by <a href="https://github.com/louwers/maplibre-native-next">maplibre-native-next</a>
+    ·</span> Rendered by <a href="https://github.com/louwers/maplibre-native-next">maplibre-native-next</a>
     on WebGPU
   </div>
   <script>
@@ -52,12 +52,19 @@
       return null;
     }
 
+    // ?style=<URL> loads another style than OpenFreeMap's Liberty. Its
+    // server must allow CORS, as the page is cross-origin isolated.
+    const style = new URLSearchParams(location.search).get("style");
+    if (style) document.getElementById("style-credit").remove();
+
     let ready = false;
     function start() {
       const ratio = window.devicePixelRatio || 1;
       document.documentElement.style.setProperty("--dpr", String(ratio));
+      const args = [String(view.clientWidth), String(view.clientHeight), String(ratio)];
+      if (style) args.push(new URL(style, location.href).href);
       window.Module = {
-        arguments: [String(view.clientWidth), String(view.clientHeight), String(ratio)],
+        arguments: args,
         showStatus,
         print: (text) => console.log(text),
         printErr: (text) => console.warn(text),
